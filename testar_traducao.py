@@ -22,7 +22,6 @@ PRIORITY_ID_PADRAO = 120549      # Prioridade padrão para todas as mesas
 ID_TECNICO_LEO = 117180
 ID_TECNICO_SANIA = 1019979
 
-# Headers para buscas JSON na API do TiFlux
 headers_tiflux_json = {
     "accept": "application/json",
     "Content-Type": "application/json",
@@ -148,7 +147,7 @@ if resposta.status_code == 200:
             email_solicitante_glpi
         )
 
-        # De/Para de Prioridades (Formatando texto para colocar dentro da descrição)
+        # De/Para de Prioridades
         mapa_prioridades = {1: "Baixa", 2: "Média", 3: "Normal", 4: "Alta", 5: "Urgente"}
         prioridade_glpi_texto = mapa_prioridades.get(prioridade_glpi, "Normal")
         
@@ -162,14 +161,14 @@ if resposta.status_code == 200:
         print("=" * 80)
         print(f"• Cliente ID:         {CLIENTE_TIFLUX_ID}")
         print(f"• Mesa ID:            {mesa_tiflux}")
-        print(f"• Técnico Ref:        {id_tecnico_tiflux} ({nome_tecnico_tiflux})")
+        print(f"• Técnico Resp:       {id_tecnico_tiflux} ({nome_tecnico_tiflux})")
         print(f"• Solicitante GLPI:   {nome_solicitante_glpi} <{email_solicitante_glpi}>")
         print(f"• Solicitante TiFlux: {id_solicitante_tiflux} ({info_solicitante_tiflux})")
         print(f"• Priority ID TiFlux: {PRIORITY_ID_PADRAO}")
         print(f"• Título Final:       {titulo_tiflux}")
         print("=" * 80)
 
-        # 4. ENVIO REAL PARA A API DO TIFLUX (Usando Form Data / Multipart)
+        # 4. ENVIO REAL PARA A API DO TIFLUX (Etapa 1: Criar Ticket)
         headers_post_tiflux = {
             "accept": "application/json",
             "Authorization": f"Bearer {TOKEN_TIFLUX}"
@@ -187,12 +186,45 @@ if resposta.status_code == 200:
         print("\n🚀 Disparando criação do ticket no TiFlux...")
         url_tickets = f"{URL_TIFLUX}/tickets"
         
-        # Enviando via data/files form multipart (compatível com a chamada cURL -F)
         resp_criacao = requests.post(url_tickets, data=form_data, headers=headers_post_tiflux)
 
         print(f"Status Code da Criação: {resp_criacao.status_code}")
-        print("Resposta da API TiFlux:")
-        print(resp_criacao.text)
+        
+        if resp_criacao.status_code in [200, 201]:
+            dados_retorno = resp_criacao.json()
+            
+            # Pega o 'ticket_number' diretamente de dentro do objeto 'ticket'
+            ticket_number_tiflux = None
+            if isinstance(dados_retorno, dict) and "ticket" in dados_retorno:
+                ticket_number_tiflux = dados_retorno["ticket"].get("ticket_number")
+
+            print(f"✅ Ticket criado com sucesso! Código do chamado no TiFlux: #{ticket_number_tiflux}")
+            
+            # 5. ATRIBUINDO O TÉCNICO (Etapa 2: Rota de Responsável)
+            if ticket_number_tiflux:
+                print(f"👤 Atribuindo técnico {nome_tecnico_tiflux} (ID: {id_tecnico_tiflux}) ao chamado #{ticket_number_tiflux}...")
+                
+                # Rota dedicada de alteração de responsável pelo ticket_number
+                url_alterar_responsavel = f"{URL_TIFLUX}/tickets/{ticket_number_tiflux}/change_responsible"
+                payload_resp = {"responsible_id": id_tecnico_tiflux}
+                
+                resp_update = requests.post(url_alterar_responsavel, json=payload_resp, headers=headers_tiflux_json)
+                
+                if resp_update.status_code not in [200, 201, 204]:
+                    # Tentativa alternativa via PUT caso a rota post não responda 200
+                    url_put = f"{URL_TIFLUX}/tickets/{ticket_number_tiflux}"
+                    payload_put = {"ticket": {"responsible_id": id_tecnico_tiflux}}
+                    resp_update = requests.put(url_put, json=payload_put, headers=headers_tiflux_json)
+
+                print(f"Status Code da Atribuição: {resp_update.status_code}")
+                print("Resposta da Atribuição:")
+                print(resp_update.text)
+            else:
+                print("⚠️ Não foi possível identificar o ticket_number na resposta do TiFlux.")
+            
+        else:
+            print("❌ Erro ao criar ticket na API TiFlux:")
+            print(resp_criacao.text)
         
     else:
         print(f"❌ Não foi possível encontrar o chamado #{ID_CHAMADO_TESTE}. Código: {resp_ticket.status_code}")
